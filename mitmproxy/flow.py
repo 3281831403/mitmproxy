@@ -155,7 +155,9 @@ class Flow(serializable.Serializable):
             "comment": self.comment,
             "timestamp_created": self.timestamp_created,
         }
-        state["backup"] = copy.deepcopy(self._backup) if self._backup != state else None
+        # Note: `self._backup` is deliberately not included here. It is a session-local
+        # undo snapshot and must not leak into dump files, where it would mark every
+        # loaded flow as modified and let `revert()` restore stale state from another session.
         return state
 
     def set_state(self, state: serializable.State) -> None:
@@ -177,7 +179,10 @@ class Flow(serializable.Serializable):
         self.metadata = state.pop("metadata")
         self.comment = state.pop("comment")
         self.timestamp_created = state.pop("timestamp_created")
-        self._backup = state.pop("backup", None)
+        # Old dump files may still carry a serialized undo snapshot. Discard it:
+        # backups are session-local, and a stale snapshot from another session must
+        # neither mark the flow as modified nor be restored by revert().
+        state.pop("backup", None)
         assert state == {}
 
     @classmethod
@@ -193,14 +198,21 @@ class Flow(serializable.Serializable):
         return f
 
     def copy(self):
-        """Make a copy of this flow."""
+        """
+        Make an independent copy of this flow.
+
+        The copy is detached from any live connection: it is neither `live` nor
+        `intercepted`, so it can be replayed even if the original is currently
+        intercepted. Undo snapshots are session-local and not carried over.
+        """
         f = super().copy()
         f.live = False
+        f.intercepted = False
         return f
 
     def modified(self):
         """
-        `True` if this file has been modified by a user, `False` otherwise.
+        `True` if this flow has been modified by a user, `False` otherwise.
         """
         if self._backup:
             return self._backup != self.get_state()

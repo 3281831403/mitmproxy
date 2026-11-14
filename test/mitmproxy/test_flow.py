@@ -105,14 +105,62 @@ class TestSerialize:
 
     def test_copy(self):
         """
-        _backup may be shared across instances. That should not raise errors.
+        Copies are independent: they get a new id, are detached from any live
+        connection, and don't carry over the session-local undo snapshot.
         """
         f = tflow.tflow()
         f.backup()
         f.request.path = "/foo"
+        f.intercept()
+        f.live = True
         f2 = f.copy()
-        f2.revert()
+        assert f2.id != f.id
+        assert not f2.live
+        assert not f2.intercepted
+        assert not f2.modified()
+        f2.revert()  # no-op, must not raise
         f.revert()
+        assert f.request.path != "/foo"
+
+    def test_backup_not_serialized(self):
+        """
+        Undo snapshots are session-local and must not end up in dump files.
+        """
+        f = tflow.tflow(resp=True)
+        f.backup()
+        f.request.content = b"edited"
+        assert f.modified()
+        assert "backup" not in f.get_state()
+
+        sio = io.BytesIO()
+        mitmproxy.io.FlowWriter(sio).add(f)
+        assert b"backup" not in sio.getvalue()
+
+        sio.seek(0)
+        (f2,) = list(mitmproxy.io.FlowReader(sio).stream())
+        assert not f2.modified()
+        assert f2.request.content == b"edited"
+
+    def test_backup_in_old_dumps_is_discarded(self):
+        """
+        Dumps written by versions that serialized the undo snapshot must still
+        load, but the stale snapshot is discarded: the flow is not modified and
+        revert() does not restore state from another session.
+        """
+        f = tflow.tflow(resp=True)
+        state = f.get_state()
+        state["response"]["content"] = b"current"
+        stale_backup = tflow.tflow(resp=True).get_state()
+        stale_backup["response"]["content"] = b"stale"
+        state["backup"] = stale_backup
+
+        sio = io.BytesIO()
+        tnetstring.dump(state, sio)
+        sio.seek(0)
+        (f2,) = list(mitmproxy.io.FlowReader(sio).stream())
+        assert not f2.modified()
+        f2.revert()
+        assert f2.response.content == b"current"
 
 
 class TestFlowMaster:

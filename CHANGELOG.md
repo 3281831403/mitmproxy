@@ -7,6 +7,12 @@
 
 ## Unreleased: mitmproxy next
 
+- Fix flow change tracking: undo snapshots (`Flow.backup()`) are session-local and no longer
+  serialized into dump files. Flows loaded from a dump are not marked as modified anymore, and
+  `flow.revert` no longer restores stale snapshots saved by another session. Old dump files
+  that contain such snapshots are still read, but the snapshots are discarded.
+  Additionally, `Flow.copy()` now detaches the copy from any live connection, so copies of
+  intercepted flows are no longer intercepted themselves and can be replayed.
 - Fix a crash when an addon or `modify_headers` sets an HTTP/3 header name or value longer than
   65,535 bytes, which QPACK cannot encode. The client now receives a 502 error instead, or a stream
   reset if the response was already partly sent.

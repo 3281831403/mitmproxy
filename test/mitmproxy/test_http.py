@@ -803,9 +803,12 @@ class TestHTTPFlow:
         f = tflow()
         f.intercept()
         f2 = f.copy()
-        assert f.intercepted is f2.intercepted is True
+        # Copies are detached from the live connection: they are not intercepted
+        # themselves, so that they can be replayed while the original is held.
+        assert f.intercepted is True
+        assert f2.intercepted is False
         f.resume()
-        f2.resume()
+        f2.resume()  # no-op on the copy, must not raise
         assert f.intercepted is f2.intercepted is False
 
     def test_timestamp_start(self):
